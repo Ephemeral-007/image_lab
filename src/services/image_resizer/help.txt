@@ -1,0 +1,44 @@
+Image Resizer Service - Research-Level Capabilities
+
+Overview
+- Purpose: Resize to specific dimensions or compress to precise target file sizes (e.g., 1 MB to 20 KB) with minimal perceived quality loss.
+- Inputs: file upload or URL. Outputs saved under ./resized/.
+
+Key Features
+- Dimension control: fit_within, fill_and_crop, stretch; optional upscaling.
+- Target file size: binary-search quality and choose best format to hit size within tolerance, constrained by SSIM threshold.
+- Quality metrics: PSNR and SSIM reported for resized output.
+- Metadata: preserve EXIF when possible (JPEG). Alpha channels flattened for JPEG.
+
+API Endpoint
+POST /resize
+- Body (JSON multipart field "query"): { options: ResizerOptions }
+- Also send a file (form-data key "file") or pass a url param.
+
+Models
+- ResizerOptions
+  - dimensions?: { width?, height?, strategy: fit_within|fill_and_crop|stretch, allow_upscale? }
+  - target_size?: { target_size_kb, format_priority?, quality_min?, quality_max?, tolerance_kb?, max_iterations?, ssim_threshold? }
+  - output_format?: jpeg|jpg|png|webp|tiff
+  - background_rgba?: [r,g,b,a]
+  - keep_metadata?: boolean
+
+Behavior
+- If target_size provided: attempts formats in priority order (default WEBP -> JPEG -> PNG), binary-search quality to land within tolerance, respecting SSIM threshold.
+- If dimensions provided: resizes using selected strategy before compression.
+- Returns width/height, bytes_written, PSNR/SSIM.
+
+Examples
+1) Dimension resize to 1024x768 with fit-within
+   curl -X POST -F "file=@/path/to/img.jpg" -F 'query={"options":{"dimensions":{"width":1024,"height":768,"strategy":"fit_within"}}}' http://localhost:8000/resize
+
+2) Target size 20 KB, high SSIM
+   curl -X POST -F "file=@/path/to/img.jpg" -F 'query={"options":{"target_size":{"target_size_kb":20,"ssim_threshold":0.97}}}' http://localhost:8000/resize
+
+3) Dimension resize + size constraint
+   curl -X POST -F "file=@/path/to/img.jpg" -F 'query={"options":{"dimensions":{"width":800},"target_size":{"target_size_kb":60}}}' http://localhost:8000/resize
+
+Notes
+- PNG uses palette optimization rather than quality; for small targets prefer WEBP/JPEG for best results.
+- SSIM thresholds near 0.98 are very strict and may prevent reaching tiny sizes; relax as needed.
+

@@ -1,0 +1,43 @@
+Image Filters & Effects - Research-Level Capabilities
+
+Overview
+- Background removal/replace/blur, comprehensive filters, multi-image/text overlays, and eraser with blur.
+- Uses rembg for high-quality subject cutouts when available; falls back to basic behavior otherwise.
+
+Background Tools
+- remove: remove background and place subject on white
+- transparent: cutout subject with transparent background
+- blur: blur the background (Gaussian radius configurable)
+- replace_color: set a solid color background
+- replace_image: composite subject over another image
+
+Filters (stackable)
+- grayscale, sepia, sharpen, gaussian_blur(amount), median_blur(size), edge_enhance, emboss,
+  brightness(amount), contrast(amount), saturation(amount), hue_shift(amount)
+
+Overlays
+- image: position/size/rotate/opacity; from path or URL
+- text: content, position, font size/color, optional TTF font path
+
+Eraser
+- rectangle/circle masks to erase regions, optional blur to feather edges.
+
+API
+POST /effects
+- Body JSON (multipart field "query"): { options: EffectsOptions }
+- Send file or url parameter.
+- Returns path and metadata.
+
+Examples
+- Blur background:
+  { "options": { "background": { "action": "blur", "blur_radius": 16 } } }
+- Transparent background + overlay suit PNG:
+  { "options": { "background": { "action": "transparent" }, "overlays": [{ "type":"image", "image_url":"https://.../suit.png", "x":20, "y":10, "opacity":0.95 }] } }
+- Filters chain:
+  { "options": { "filters": [{"type":"grayscale"},{"type":"sharpen"},{"type":"contrast","amount":1.2}] } }
+- Erase with feathering:
+  { "options": { "erase": [{"type":"rectangle","x":10,"y":10,"width":120,"height":80,"blur":true,"blur_radius":12}] } }
+
+Notes
+- rembg/onnxruntime are optional; install for best cutout quality.
+

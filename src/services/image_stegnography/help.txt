@@ -1,0 +1,47 @@
+Image Steganography Service - Research-Level (Phase 1 & 2)
+
+Overview
+- Purpose: Hide and retrieve data in PNGs using LSB, supporting password-based authenticated encryption.
+- Storage: Results saved under ./stego/ and ./stego_recovered/.
+
+Phase 1 Features
+1) Hide text in PNG using LSB
+2) Retrieve hidden text
+3) Capacity reporting: available bits/bytes and max text characters (with/without password)
+
+Phase 2 Features
+1) Embed any file (PDF, TXT, etc.)
+2) Unhide embedded file
+3) Limits: enforce allowed cover pixels, secret bytes, and secret/capacity ratio
+4) Password-based hiding/revealing (AEAD via AES-GCM + Scrypt KDF)
+
+Phase 3 (Encrypted Text Steganography)
+- AES encryption: text is encrypted with user password (AES-GCM, Scrypt-derived key)
+- LSB + Encryption: encrypted text bytes are hidden via LSB
+- Decrypt & reveal: correct password required to read back plaintext
+- Validation logic: API returns 401 with message "Invalid password or corrupted payload" on wrong password for frontend to handle
+
+API Endpoints
+- POST /stego/capacity (multipart file, bits_per_channel)
+- POST /stego/hide-text (file, text, password?, bits_per_channel?)
+- POST /stego/reveal-text (file, password?)
+- POST /stego/hide-file (cover, secret, password?, bits_per_channel?)
+- POST /stego/reveal-file (file, password?)
+
+Notes
+- Use PNG for cover images to prevent loss from compression. LSB embeds into RGB channels.
+- Password mode derives a key via Scrypt, encrypts payload with AES-GCM (salt/nonce stored in header).
+- Header includes magic/version/type/lengths/filename (for files) to safely parse payload.
+- Capacity roughly equals width*height*3*bits_per_channel bits (minus header/crypto overhead).
+- For stronger stealth, keep bits_per_channel at 1 and consider randomized embedding patterns (future work).
+
+Examples
+1) Hide text:
+   curl -F "file=@/path/cover.png" -F "text=Secret message" -F "password=pass123" http://localhost:8000/stego/hide-text
+2) Reveal text:
+   curl -F "file=@./stego/stego_text.png" -F "password=pass123" http://localhost:8000/stego/reveal-text
+3) Hide file:
+   curl -F "cover=@/path/cover.png" -F "secret=@/path/secret.pdf" -F "password=pass123" http://localhost:8000/stego/hide-file
+4) Reveal file:
+   curl -F "file=@./stego/stego_file.png" -F "password=pass123" http://localhost:8000/stego/reveal-file
+

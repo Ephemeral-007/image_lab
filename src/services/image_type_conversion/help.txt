@@ -1,0 +1,66 @@
+Image Type Conversion Service - Research-Level Capabilities
+
+Overview
+- Purpose: Flexible, robust, and reproducible image format conversion with advanced controls for research workflows.
+- Inputs: upload, URL, or raw bytes (internal).
+- Outputs: written to ./converted/ (or ./converted/batch/) with correct extensions.
+
+Key Features
+- Broad format support: jpg/jpeg, png, webp, tiff, bmp, gif, pdf, jp2. Animated GIF/WEBP support.
+- Transparency handling: automatic alpha flattening to background for JPEG/PDF.
+- Metadata preservation: EXIF/ICC where possible; optional stripping.
+- Advanced options:
+  - Resize strategies: fit_within, fill_and_crop, stretch; prevent/allow upscale.
+  - Color management: convert or assign sRGB profile to standardize color rendering.
+  - Palette quantization: set palette size and dithering for PNG/GIF.
+  - Encoder tuning: quality, optimize, progressive, PNG compress level, WEBP lossless.
+  - Metrics (optional): PSNR & SSIM (first frame) for quality assessment.
+- Batch conversion: submit multiple targets for one input.
+
+API Endpoints
+1) POST /convert
+   - Input: file or url, query to_format=jpeg|png|webp|tiff|bmp|gif|pdf|jp2
+   - Output: ConversionAPIResult with output_path, format, dimensions, frames, metadata_preserved.
+
+2) POST /convert/advanced
+   - Body JSON + file/url:
+     {
+       to_format: "webp",
+       resize?: { max_width?: number, max_height?: number, strategy?: "fit_within"|"fill_and_crop"|"stretch", allow_upscale?: boolean },
+       compute_metrics?: boolean
+     }
+   - Output: ConversionAPIResult (+ optional PSNR/SSIM in result.extra).
+
+3) POST /convert/batch
+   - Body JSON + file/url: { targets: AdvancedConversionOptions[] }
+   - Output: ConversionAPIResult[] for each target.
+
+Models
+- ConversionInput: { file_path?, image_bytes?, url? }
+- ConversionOptions: { to_format, background_color, quality, optimize, progressive, keep_metadata, keep_animation, dpi, lossless_webp, png_compress_level }
+- AdvancedConversionOptions extends ConversionOptions with: { resize?, quantize?, color_profile_action, compute_metrics }
+- ResizeOptions: { max_width?, max_height?, strategy, allow_upscale }
+- QuantizeOptions: { num_colors?, dither }
+- BatchConversionRequest: { file_path?|image_bytes?|url?, targets: AdvancedConversionOptions[] }
+- ConversionResult: output details + extra
+
+Implementation Notes
+- Animated input: keep_animation true will preserve animation for GIF/WEBP when supported.
+- JPEG alpha: transparency is flattened using background_color RGBA.
+- Color profiles: convert_to_srgb transforms pixel values to sRGB; assign_srgb only tags sRGB ICC without converting.
+- Metrics: computed by comparing source RGB vs written output RGB for first frame.
+- PDF output: embeds a single page rendered from the raster image (no vectorization).
+
+Examples
+- Simple: curl -F "file=@/path/to/img.png" 'http://localhost:8000/convert?to_format=jpeg'
+- Advanced: curl -X POST -F "file=@/path/to/img.png" -H 'Content-Type: application/json' \
+  -F 'query={"to_format":"webp","resize":{"max_width":1024,"max_height":1024,"strategy":"fit_within"},"compute_metrics":true}' \
+  http://localhost:8000/convert/advanced
+- Batch: curl -X POST -F "file=@/path/to/img.png" -H 'Content-Type: application/json' \
+  -F 'query={"targets":[{"to_format":"jpeg"},{"to_format":"webp","resize":{"max_width":800}}]}' \
+  http://localhost:8000/convert/batch
+
+Todo
+- Optional: add HEIF/HEIC support via pillow-heif.
+- Optional: add vector export to SVG (trace) via external tool for research comparisons.
+

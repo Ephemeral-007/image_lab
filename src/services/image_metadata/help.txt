@@ -1,0 +1,76 @@
+Image Metadata Service - Research-Level Capabilities
+
+Overview
+- Purpose: Robust extraction, updating, stripping, and optional XMP enrichment of image metadata for research workflows.
+- Supports inputs via file upload, URL, or raw bytes (internal use).
+- Storage: Updated outputs are written to ./metadata/ with appropriate extensions.
+
+Key Features
+- Extraction (EXIF, GPS, core imaging info): width, height, format, mode, camera make/model/software, EXIF timestamps, GPS (lat/lon/alt, altitude ref), optional XMP (if libxmp available).
+- Updating (EXIF + GPS): set/update DateTimeOriginal/DateTimeDigitized/DateTime, Make/Model/Software/Artist/Copyright, GPS (lat/lon/alt/ref). Decimal degrees converted to DMS.
+- Stripping: remove all metadata by saving a clean copy (JPEG) with no EXIF. Useful for privacy/anonymization workflows.
+- Research-focused: preserves fidelity where possible (EXIF on JPEG/TIFF/WEBP), falls back to JPEG to ensure EXIF persistence from non-EXIF formats.
+ - Hashing: aHash, pHash, dHash, wHash for duplicate detection and similarity measurement.
+ - Diffing: metadata and hash-based difference between two images, including Hamming distance of pHash.
+ - Orientation normalization: auto-apply EXIF orientation and save a normalized copy.
+ - Sidecar XMP write: generate a minimal XMP sidecar with Dublin Core fields (title, description, creator, rights, subjects).
+
+API Endpoints
+1) POST /metadata/extract
+   - Input: multipart with file, or query param url.
+   - Output (ExtractAPIResult):
+     {
+       width, height, format, mode,
+       gps: { latitude, longitude, altitude, altitude_ref },
+       datetime_original, datetime_digitized, datetime,
+       make, model, software
+     }
+   - Remarks: If libxmp is installed and a local file path is given, additional XMP properties may appear in the exif map.
+
+2) POST /metadata/update
+   - Input options:
+     a) JSON body (no file): { "updates": MetadataUpdateRequest, "url": string? }
+     b) Multipart: file + form field updates_json containing JSON string of MetadataUpdateRequest
+   - MetadataUpdateRequest fields:
+     - datetime_original, datetime_digitized, datetime
+     - make, model, software, artist, copyright
+     - gps_latitude, gps_longitude (decimal degrees), gps_altitude, gps_altitude_ref (0 above sea, 1 below)
+   - Output (UpdateAPIResult): { output_path, bytes_written, format, updated_fields }
+   - Notes:
+     - Output is written under ./metadata/ and format defaults to JPEG when source format is not EXIF-friendly (e.g., PNG).
+     - GPS decimal degrees are converted to EXIF DMS internally; N/E positive, S/W negative.
+
+3) POST /metadata/strip
+   - Input: multipart with file, or query param url.
+   - Output (UpdateAPIResult): { output_path, bytes_written, format, updated_fields }
+   - Behavior: Saves a clean recompressed JPEG (no EXIF) under ./metadata/.
+
+Models
+- MetadataInput: { file_path?: Path, image_bytes?: bytes, url?: string }
+- GPSData: { latitude?: float, longitude?: float, altitude?: float, altitude_ref?: 0|1 }
+- MetadataExtractResult: imaging core + gps + common EXIF fields
+- MetadataUpdateRequest: fields to set; all optional
+- MetadataUpdateResult: output info and the fields that were updated
+ - HashResult: { ahash, phash, dhash, whash }
+ - MetadataDiffResult: { left, right, diffs, hash_hamming_distance }
+ - XMPWriteRequest: { title, description, creator, rights, subjects[] }
+
+Implementation Notes
+- Libraries: Pillow (PIL) for image IO, piexif for EXIF read/write, httpx for URL fetch, optional libxmp for XMP.
+- PNG EXIF: Pillow does not reliably embed EXIF into PNG; service will save as JPEG/TIFF/WEBP to persist EXIF.
+- Orientation: This service does not auto-rotate; frontends should interpret EXIF orientation if needed.
+- XMP: Basic XMP extraction is attempted only if libxmp is present and a local file path is used; network bytes are not stored to disk for XMP parsing in this version.
+
+Examples
+- Extract: curl -F "file=@/path/to/img.jpg" http://localhost:8000/metadata/extract
+- Update: curl -F "file=@/path/to/img.jpg" -F 'updates_json={"gps_latitude":28.6139,"gps_longitude":77.2090}' http://localhost:8000/metadata/update
+- Strip: curl -F "file=@/path/to/img.jpg" http://localhost:8000/metadata/strip
+ - Hashes: curl -F "file=@/path/to/img.jpg" http://localhost:8000/metadata/hashes
+ - Normalize orientation: curl -F "file=@/path/to/img.jpg" http://localhost:8000/metadata/normalize-orientation
+ - Diff: curl -F "left_file=@/path/to/left.jpg" -F "right_file=@/path/to/right.jpg" http://localhost:8000/metadata/diff
+
+
+
+
+Todo:
+Optional: Install libxmp if you want richer XMP extraction; otherwise XMP sidecar writing is already supported.
