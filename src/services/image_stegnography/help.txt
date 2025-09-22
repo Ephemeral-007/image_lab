@@ -1,8 +1,9 @@
-Image Steganography Service - Research-Level (Phase 1 & 2)
+Image Steganography Service - Research-Level (Phase 1, 2, 3 & 4)
 
 Overview
 - Purpose: Hide and retrieve data in PNGs using LSB, supporting password-based authenticated encryption.
-- Storage: Results saved under ./stego/ and ./stego_recovered/.
+- Storage: Results saved under ./stego/, ./stego_recovered/, and ./bit_planes/.
+- Version: Phase 4 with advanced LSB control features
 
 Phase 1 Features
 1) Hide text in PNG using LSB
@@ -21,27 +22,57 @@ Phase 3 (Encrypted Text Steganography)
 - Decrypt & reveal: correct password required to read back plaintext
 - Validation logic: API returns 401 with message "Invalid password or corrupted payload" on wrong password for frontend to handle
 
+Phase 4 (Advanced Image-Based LSB Control)
+- Bit plane choice: Choose 1-8 LSB bits per channel for strength vs visibility trade-off
+- Advanced encoding options: Select specific RGB channel(s), add error correction
+- Compression + stego: Optional zlib compression before embedding to increase effective capacity
+- Bit-plane visualizer: Generate visualizations showing how hidden data affects image bits
+- Enhanced header format: Stores all metadata including compression, error correction, and channel info
+
 API Endpoints
-- POST /stego/capacity (multipart file, bits_per_channel)
-- POST /stego/hide-text (file, text, password?, bits_per_channel?)
+- POST /stego/capacity (multipart file, bits_per_channel, channels)
+- POST /stego/hide-text (file, text, password?, bits_per_channel?, channels?, compress?, error_correction?, output_filename?)
 - POST /stego/reveal-text (file, password?)
-- POST /stego/hide-file (cover, secret, password?, bits_per_channel?)
+- POST /stego/hide-file (cover, secret, password?, bits_per_channel?, channels?, compress?, error_correction?, output_filename?)
 - POST /stego/reveal-file (file, password?)
+- POST /stego/visualize-bit-planes (file, channel)
+- POST /stego/visualize-single-bit-plane (file, bit_plane, channel)
+
+Advanced Options
+- bits_per_channel: 1-8 (default: 1 for maximum stealth)
+- channels: R, G, B, RG, RB, GB, or RGB (default: RGB for maximum capacity)
+- compress: true/false (default: false)
+- error_correction: none, low, medium, high (default: none)
+- output_filename: Custom filename for output (default: auto-generated)
 
 Notes
 - Use PNG for cover images to prevent loss from compression. LSB embeds into RGB channels.
 - Password mode derives a key via Scrypt, encrypts payload with AES-GCM (salt/nonce stored in header).
-- Header includes magic/version/type/lengths/filename (for files) to safely parse payload.
-- Capacity roughly equals width*height*3*bits_per_channel bits (minus header/crypto overhead).
+- Header includes magic/version/type/lengths/filename/channels/compression/error_correction info.
+- Capacity roughly equals width*height*channels*bits_per_channel bits (minus header/crypto overhead).
 - For stronger stealth, keep bits_per_channel at 1 and consider randomized embedding patterns (future work).
+- Compression can significantly increase effective capacity for text and compressible files.
+- Error correction adds redundancy but increases payload size.
 
 Examples
-1) Hide text:
-   curl -F "file=@/path/cover.png" -F "text=Secret message" -F "password=pass123" http://localhost:8000/stego/hide-text
+1) Hide text with advanced features:
+   curl -F "file=@/path/cover.png" -F "text=Secret message" -F "password=pass123" -F "bits_per_channel=2" -F "channels=RG" -F "compress=true" -F "error_correction=low" http://localhost:8000/stego/hide-text
+
 2) Reveal text:
    curl -F "file=@./stego/stego_text.png" -F "password=pass123" http://localhost:8000/stego/reveal-text
-3) Hide file:
-   curl -F "cover=@/path/cover.png" -F "secret=@/path/secret.pdf" -F "password=pass123" http://localhost:8000/stego/hide-file
+
+3) Hide file with advanced features:
+   curl -F "cover=@/path/cover.png" -F "secret=@/path/secret.pdf" -F "password=pass123" -F "bits_per_channel=3" -F "compress=true" http://localhost:8000/stego/hide-file
+
 4) Reveal file:
    curl -F "file=@./stego/stego_file.png" -F "password=pass123" http://localhost:8000/stego/reveal-file
+
+5) Check capacity with specific settings:
+   curl -F "file=@/path/cover.png" -F "bits_per_channel=4" -F "channels=GB" http://localhost:8000/stego/capacity
+
+6) Visualize bit planes:
+   curl -F "file=@/path/image.png" -F "channel=R" http://localhost:8000/stego/visualize-bit-planes
+
+7) Visualize specific bit plane:
+   curl -F "file=@/path/image.png" -F "channel=B" -F "bit_plane=0" http://localhost:8000/stego/visualize-single-bit-plane
 

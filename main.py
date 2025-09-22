@@ -17,7 +17,9 @@ from src.services.image_resizer.models.resizer_models import ResizerInput, Resiz
 from src.services.image_stegnography.src.service import ImageStegoService
 from src.services.image_stegnography.models.stego_models import StegoTextHideRequest, StegoTextRevealRequest, StegoFileHideRequest
 from src.services.image_filters_and_effects.src.service import ImageEffectsService
-from src.services.image_filters_and_effects.models.effects_models import EffectsInput, EffectsOptions
+from src.services.image_filters_and_effects.src.result import EffectsAPIResult
+from src.services.image_filters_and_effects.models.effects_models import (EffectsInput, EffectsOptions,
+    BackgroundAction, FilterSpec, OverlayItem, EraseShape)
 from io import BytesIO
 from PIL import Image
 
@@ -132,7 +134,8 @@ class EffectsQuery(BaseModel):
     options: EffectsOptions
 
 
-@app.post("/effects")
+# Main effects endpoint for all effect options
+@app.post("/effects", response_model=EffectsAPIResult)
 async def apply_effects(query: EffectsQuery, file: UploadFile | None = File(default=None), url: str | None = None):
     try:
         if file is not None:
@@ -150,17 +153,225 @@ async def apply_effects(query: EffectsQuery, file: UploadFile | None = File(defa
         output_path = out_dir / filename
 
         result = effects_service.apply(eff_input, query.options, output_path=output_path)
-        return {
-            "output_path": str(result.output_path) if result.output_path else None,
-            "width": result.width,
-            "height": result.height,
-            "bytes_written": result.bytes_written,
-            "extra": result.extra,
-        }
+        return EffectsAPIResult(
+            output_path=str(result.output_path) if result.output_path else None,
+            width=result.width,
+            height=result.height,
+            bytes_written=result.bytes_written,
+            extra=result.extra,
+        )
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# Background effects specific endpoint
+class BackgroundQuery(BaseModel):
+    background: BackgroundAction
+
+
+@app.post("/effects/background", response_model=EffectsAPIResult)
+async def apply_background_effect(query: BackgroundQuery, file: UploadFile | None = File(default=None), url: str | None = None):
+    try:
+        if file is not None:
+            content = await file.read()
+            eff_input = EffectsInput(image_bytes=content)
+            filename = file.filename or "background_effect.png"
+        elif url is not None:
+            eff_input = EffectsInput(url=url)
+            filename = "background_effect.png"
+        else:
+            raise HTTPException(status_code=400, detail="Provide either file or url")
+
+        out_dir = Path("./effects")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / filename
+
+        options = EffectsOptions(background=query.background)
+        result = effects_service.apply(eff_input, options, output_path=output_path)
+        return EffectsAPIResult(
+            output_path=str(result.output_path) if result.output_path else None,
+            width=result.width,
+            height=result.height,
+            bytes_written=result.bytes_written,
+            extra=result.extra,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# Filters specific endpoint
+class FiltersQuery(BaseModel):
+    filters: list[FilterSpec]
+
+
+@app.post("/effects/filters", response_model=EffectsAPIResult)
+async def apply_filters(query: FiltersQuery, file: UploadFile | None = File(default=None), url: str | None = None):
+    try:
+        if file is not None:
+            content = await file.read()
+            eff_input = EffectsInput(image_bytes=content)
+            filename = file.filename or "filtered.png"
+        elif url is not None:
+            eff_input = EffectsInput(url=url)
+            filename = "filtered.png"
+        else:
+            raise HTTPException(status_code=400, detail="Provide either file or url")
+
+        out_dir = Path("./effects")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / filename
+
+        options = EffectsOptions(filters=query.filters)
+        result = effects_service.apply(eff_input, options, output_path=output_path)
+        return EffectsAPIResult(
+            output_path=str(result.output_path) if result.output_path else None,
+            width=result.width,
+            height=result.height,
+            bytes_written=result.bytes_written,
+            extra=result.extra,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# Single filter application endpoint
+class SingleFilterQuery(BaseModel):
+    filter: FilterSpec
+
+
+@app.post("/effects/filter", response_model=EffectsAPIResult)
+async def apply_single_filter(query: SingleFilterQuery, file: UploadFile | None = File(default=None), url: str | None = None):
+    try:
+        if file is not None:
+            content = await file.read()
+            eff_input = EffectsInput(image_bytes=content)
+            filename = file.filename or f"{query.filter.type}_filtered.png"
+        elif url is not None:
+            eff_input = EffectsInput(url=url)
+            filename = f"{query.filter.type}_filtered.png"
+        else:
+            raise HTTPException(status_code=400, detail="Provide either file or url")
+
+        out_dir = Path("./effects")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / filename
+
+        options = EffectsOptions(filters=[query.filter])
+        result = effects_service.apply(eff_input, options, output_path=output_path)
+        return EffectsAPIResult(
+            output_path=str(result.output_path) if result.output_path else None,
+            width=result.width,
+            height=result.height,
+            bytes_written=result.bytes_written,
+            extra=result.extra,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# Overlays specific endpoint
+class OverlaysQuery(BaseModel):
+    overlays: list[OverlayItem]
+
+
+@app.post("/effects/overlays", response_model=EffectsAPIResult)
+async def apply_overlays(query: OverlaysQuery, file: UploadFile | None = File(default=None), url: str | None = None):
+    try:
+        if file is not None:
+            content = await file.read()
+            eff_input = EffectsInput(image_bytes=content)
+            filename = file.filename or "overlaid.png"
+        elif url is not None:
+            eff_input = EffectsInput(url=url)
+            filename = "overlaid.png"
+        else:
+            raise HTTPException(status_code=400, detail="Provide either file or url")
+
+        out_dir = Path("./effects")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / filename
+
+        options = EffectsOptions(overlays=query.overlays)
+        result = effects_service.apply(eff_input, options, output_path=output_path)
+        return EffectsAPIResult(
+            output_path=str(result.output_path) if result.output_path else None,
+            width=result.width,
+            height=result.height,
+            bytes_written=result.bytes_written,
+            extra=result.extra,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# Eraser specific endpoint
+class EraseQuery(BaseModel):
+    erase: list[EraseShape]
+
+
+@app.post("/effects/erase", response_model=EffectsAPIResult)
+async def apply_eraser(query: EraseQuery, file: UploadFile | None = File(default=None), url: str | None = None):
+    try:
+        if file is not None:
+            content = await file.read()
+            eff_input = EffectsInput(image_bytes=content)
+            filename = file.filename or "erased.png"
+        elif url is not None:
+            eff_input = EffectsInput(url=url)
+            filename = "erased.png"
+        else:
+            raise HTTPException(status_code=400, detail="Provide either file or url")
+
+        out_dir = Path("./effects")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / filename
+
+        options = EffectsOptions(erase=query.erase)
+        result = effects_service.apply(eff_input, options, output_path=output_path)
+        return EffectsAPIResult(
+            output_path=str(result.output_path) if result.output_path else None,
+            width=result.width,
+            height=result.height,
+            bytes_written=result.bytes_written,
+            extra=result.extra,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/effects/filters/available")
+async def list_available_filters():
+    """This endpoint lists all available filters"""
+    from src.services.image_filters_and_effects.models.effects_models import FilterType
+    basic_filters = [f for f in FilterType.__members__]
+    
+    try:
+        # Check which advanced filters are available in the system
+        from src.services.image_filters_and_effects.src.filters import FilterFactory
+        available_filters = [filter_type for filter_type in FilterType.__members__ 
+                          if FilterFactory.is_registered(FilterType(filter_type))]
+        
+        return {
+            "all_filters": basic_filters,
+            "available_filters": available_filters
+        }
+    except ImportError:
+        # Fallback if FilterFactory is not accessible
+        return {
+            "all_filters": basic_filters
+        }
 
 
 @app.post("/stego/capacity")

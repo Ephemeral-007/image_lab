@@ -42,11 +42,29 @@ class FilterType(str, Enum):
     bilateral = "bilateral"
     clahe = "clahe"
     vignette = "vignette"
+    oil_paint = "oil_paint"
+    cartoon = "cartoon"
+    pencil_sketch = "pencil_sketch"
+    color_splash = "color_splash"
+    noise_reduction = "noise_reduction"
+    invert = "invert"
+    posterize = "posterize"
+    solarize = "solarize"
+    color_balance = "color_balance"
+    gradient_map = "gradient_map"
+    glitch = "glitch"
 
 
 class FilterSpec(BaseModel):
     type: FilterType
     amount: Optional[float] = Field(default=None, description="Intensity or parameter for the filter")
+    color: Optional[Tuple[int, int, int]] = Field(default=None, description="Color parameter for filters that need a color")
+    color_mask: Optional[Tuple[int, int, int]] = Field(default=None, description="Color mask for selective color operations")
+    threshold: Optional[float] = Field(default=None, description="Threshold value for certain filters")
+    radius: Optional[int] = Field(default=None, description="Radius parameter for filters that need it")
+    strength: Optional[float] = Field(default=0.5, description="Strength of the filter effect, normalized between 0 and 1")
+    preserve_details: Optional[bool] = Field(default=True, description="Whether to preserve details in certain filters")
+    gradient_colors: Optional[List[Tuple[int, int, int]]] = Field(default=None, description="Colors for gradient map filter")
 
 
 class OverlayType(str, Enum):
@@ -80,6 +98,8 @@ class EraseShapeType(str, Enum):
     rectangle = "rectangle"
     circle = "circle"
     polygon = "polygon"
+    brush = "brush"
+    smart = "smart"
 
 
 class EraseShape(BaseModel):
@@ -94,6 +114,11 @@ class EraseShape(BaseModel):
     polygon_points: Optional[List[Tuple[int, int]]] = None
     mosaic: bool = False
     mosaic_block: int = 16
+    brush_size: Optional[int] = Field(default=20, description="Size of brush stroke for brush eraser")
+    brush_hardness: Optional[float] = Field(default=0.5, description="Hardness of brush edge (0.0-1.0)")
+    brush_points: Optional[List[Tuple[int, int]]] = Field(default=None, description="Points for brush stroke path")
+    smart_tolerance: Optional[int] = Field(default=30, description="Color tolerance for smart selection")
+    smart_contiguous: Optional[bool] = Field(default=True, description="Whether smart selection should be contiguous")
 
 
 class EffectsInput(BaseModel):

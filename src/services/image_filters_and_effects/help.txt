@@ -1,43 +1,322 @@
-Image Filters & Effects - Research-Level Capabilities
+# Image Filters & Effects - API Documentation
 
-Overview
-- Background removal/replace/blur, comprehensive filters, multi-image/text overlays, and eraser with blur.
-- Uses rembg for high-quality subject cutouts when available; falls back to basic behavior otherwise.
+## Overview
+Advanced image processing API offering comprehensive editing capabilities:
+- Background removal/replacement/blur
+- 20+ professional image filters (basic and advanced)
+- Multi-image and text overlays with blend modes
+- Multiple eraser tools with advanced capabilities
+- High-quality subject isolation using rembg when available
 
-Background Tools
-- remove: remove background and place subject on white
-- transparent: cutout subject with transparent background
-- blur: blur the background (Gaussian radius configurable)
-- replace_color: set a solid color background
-- replace_image: composite subject over another image
+## API Endpoints
 
-Filters (stackable)
-- grayscale, sepia, sharpen, gaussian_blur(amount), median_blur(size), edge_enhance, emboss,
-  brightness(amount), contrast(amount), saturation(amount), hue_shift(amount)
+### Main Endpoints
 
-Overlays
-- image: position/size/rotate/opacity; from path or URL
-- text: content, position, font size/color, optional TTF font path
+#### POST /effects
+Apply multiple effects to an image (comprehensive endpoint).
 
-Eraser
-- rectangle/circle masks to erase regions, optional blur to feather edges.
+**Request Format:**
+- Content-Type: `multipart/form-data`
+- Parameters:
+  - `file`: Binary image file (JPG/PNG/etc.) OR
+  - `url`: URL to an image
+  - `query`: JSON string containing options
 
-API
-POST /effects
-- Body JSON (multipart field "query"): { options: EffectsOptions }
-- Send file or url parameter.
-- Returns path and metadata.
+**Response:**
+```json
+{
+  "output_path": "string",
+  "width": "number",
+  "height": "number",
+  "bytes_written": "number",
+  "extra": { /* additional metadata */ }
+}
+```
 
-Examples
-- Blur background:
-  { "options": { "background": { "action": "blur", "blur_radius": 16 } } }
-- Transparent background + overlay suit PNG:
-  { "options": { "background": { "action": "transparent" }, "overlays": [{ "type":"image", "image_url":"https://.../suit.png", "x":20, "y":10, "opacity":0.95 }] } }
-- Filters chain:
-  { "options": { "filters": [{"type":"grayscale"},{"type":"sharpen"},{"type":"contrast","amount":1.2}] } }
-- Erase with feathering:
-  { "options": { "erase": [{"type":"rectangle","x":10,"y":10,"width":120,"height":80,"blur":true,"blur_radius":12}] } }
+### Specialized Endpoints
 
-Notes
-- rembg/onnxruntime are optional; install for best cutout quality.
+For easier integration, we provide focused endpoints for specific effects:
 
+#### POST /effects/background
+Apply background effects only (removal, transparency, blur, replacement).
+
+#### POST /effects/filters
+Apply multiple filters in sequence.
+
+#### POST /effects/filter
+Apply a single filter with parameters.
+
+#### POST /effects/overlays
+Add image or text overlays to an image.
+
+#### POST /effects/erase
+Apply eraser tools to remove or mask parts of an image.
+
+### Utility Endpoints
+
+#### GET /effects/filters/available
+Get a list of all available filters in the system.
+
+### Simplified Form-based Endpoints
+
+For simpler integrations without JSON:
+
+#### POST /effects/filter/simple
+Apply a single filter using form fields:
+- `filter_type`: The filter to apply
+- `amount`: Optional intensity value
+- `file` or `url`: The image to process
+
+#### POST /effects/background/simple
+Apply background effect using form fields:
+- `action`: Background action (remove, transparent, blur, etc.)
+- `blur_radius`: Optional blur radius for blur action
+- `file` or `url`: The image to process
+
+## Option Categories
+
+### 1. Background Tools
+```json
+"background": {
+  "action": "string",  // One of: remove, transparent, blur, replace_color, replace_image
+  "blur_radius": "number",  // For blur action, default: 12.0
+  "replace_color_rgba": [r, g, b, a],  // For replace_color action
+  "replace_image_path": "string",  // For replace_image action (local path)
+  "replace_image_url": "string",  // For replace_image action (remote URL)
+  "feather_radius": "number",  // Edge feathering, default: 2.0
+  "subject_scale": "number",  // Scale factor for subject, default: 1.0
+  "subject_offset_xy": [x, y]  // Offset for subject placement, default: [0, 0]
+}
+```
+
+### 2. Filters (Stackable)
+Apply multiple filters in sequence:
+```json
+"filters": [
+  {
+    "type": "string",  // Filter type (see list below)
+    "amount": "number",  // Optional intensity parameter
+    "color": [r, g, b],  // Optional color parameter for certain filters
+    "color_mask": [r, g, b],  // Optional color mask for selective filters
+    "threshold": "number",  // Optional threshold value
+    "radius": "number",  // Optional radius parameter
+    "strength": "number",  // Optional strength value (0.0-1.0)
+    "preserve_details": "boolean",  // Optional detail preservation flag
+    "gradient_colors": [[r, g, b], [r, g, b], ...]  // Optional gradient colors array
+  },
+  // Additional filters...
+]
+```
+
+#### Basic Filters
+- `grayscale`: Convert to black and white
+- `sepia`: Apply vintage sepia tone
+- `sharpen`: Enhance image details
+- `gaussian_blur`: Smooth image (amount = radius)
+- `median_blur`: Reduce noise while preserving edges
+- `edge_enhance`: Enhance edges
+- `emboss`: Create embossed effect
+- `brightness`: Adjust brightness (amount > 1.0 brightens, < 1.0 darkens)
+- `contrast`: Adjust contrast (amount > 1.0 increases, < 1.0 decreases)
+- `saturation`: Adjust color intensity (amount > 1.0 increases, < 1.0 decreases)
+- `hue_shift`: Shift colors
+- `gamma`: Adjust gamma correction
+- `bilateral`: Edge-preserving smoothing
+- `clahe`: Contrast Limited Adaptive Histogram Equalization
+- `vignette`: Darken image corners
+- `invert`: Invert image colors
+
+#### Advanced Filters
+- `oil_paint`: Oil painting effect (strength controls intensity)
+- `cartoon`: Cartoonize image (strength controls edge prominence)
+- `pencil_sketch`: Pencil drawing effect (strength blends with color)
+- `color_splash`: Keep only specified color, rest grayscale
+- `noise_reduction`: Advanced noise reduction (preserve_details option)
+- `posterize`: Reduce colors for poster effect
+- `solarize`: Create solarization effect
+- `color_balance`: Adjust color balance
+- `gradient_map`: Apply gradient mapping
+- `glitch`: Create digital glitch effects
+
+### 3. Overlays
+Add images or text on top of the base image:
+```json
+"overlays": [
+  {
+    "type": "image",
+    "x": "number",  // X position
+    "y": "number",  // Y position
+    "width": "number",  // Optional width (resizes image)
+    "height": "number",  // Optional height (resizes image)
+    "opacity": "number",  // 0.0-1.0, default: 1.0
+    "rotation_deg": "number",  // Rotation in degrees
+    "blend_mode": "string",  // One of: normal, multiply, screen, overlay, add, subtract
+    "image_path": "string",  // Local path (optional)
+    "image_url": "string"  // Remote URL (optional)
+  },
+  {
+    "type": "text",
+    "x": "number",  // X position
+    "y": "number",  // Y position
+    "text": "string",  // Text content
+    "font_size": "number",  // Font size in pixels, default: 32
+    "font_color_rgba": [r, g, b, a],  // Default: [255, 255, 255, 255]
+    "font_path": "string"  // Optional TTF font path
+  }
+]
+```
+
+### 4. Eraser Tools
+Erase regions with various shapes and options:
+```json
+"erase": [
+  {
+    "type": "string",  // One of: rectangle, circle, polygon, brush, smart
+    "x": "number",  // X position
+    "y": "number",  // Y position
+    
+    // For rectangle:
+    "width": "number",  
+    "height": "number",
+    
+    // For circle:
+    "radius": "number",
+    
+    // For polygon:
+    "polygon_points": [[x1, y1], [x2, y2], ...],  // At least 3 points
+    
+    // For brush:
+    "brush_size": "number",  // Size of brush, default: 20
+    "brush_hardness": "number",  // Edge hardness (0.0-1.0), default: 0.5
+    "brush_points": [[x1, y1], [x2, y2], ...],  // Path of brush stroke
+    
+    // For smart selection:
+    "color_mask": [r, g, b],  // Target color to erase
+    "smart_tolerance": "number",  // Color similarity tolerance, default: 30
+    "smart_contiguous": "boolean",  // Whether to select only connected pixels, default: true
+    
+    // Common options:
+    "blur": "boolean",  // Whether to feather edges, default: false
+    "blur_radius": "number",  // Feathering radius, default: 8.0
+    "mosaic": "boolean",  // Whether to mosaic instead of erase, default: false
+    "mosaic_block": "number"  // Mosaic block size, default: 16
+  }
+]
+```
+
+## Complete Examples
+
+### Example 1: Advanced Portrait Effect
+```json
+{
+  "options": {
+    "background": {
+      "action": "blur",
+      "blur_radius": 25.0
+    },
+    "filters": [
+      {"type": "brightness", "amount": 1.1},
+      {"type": "contrast", "amount": 1.15},
+      {"type": "vignette", "amount": 200}
+    ]
+  }
+}
+```
+
+### Example 2: Artistic Transformation
+```json
+{
+  "options": {
+    "filters": [
+      {"type": "oil_paint", "strength": 0.7},
+      {"type": "vignette", "amount": 300}
+    ],
+    "overlays": [
+      {
+        "type": "text",
+        "text": "ARTISTIC",
+        "x": 50,
+        "y": 50,
+        "font_size": 72,
+        "font_color_rgba": [255, 255, 255, 180]
+      }
+    ]
+  }
+}
+```
+
+### Example 3: Color Splash Effect
+```json
+{
+  "options": {
+    "filters": [
+      {
+        "type": "color_splash",
+        "color": [255, 0, 0],
+        "threshold": 45
+      }
+    ]
+  }
+}
+```
+
+### Example 4: Smart Background Removal with Image Replacement
+```json
+{
+  "options": {
+    "background": {
+      "action": "replace_image",
+      "replace_image_url": "https://example.com/backgrounds/beach.jpg",
+      "feather_radius": 3.0
+    }
+  }
+}
+```
+
+### Example 5: Advanced Erasing with Smart Selection
+```json
+{
+  "options": {
+    "erase": [
+      {
+        "type": "smart",
+        "x": 100,
+        "y": 150,
+        "color_mask": [0, 120, 255],
+        "smart_tolerance": 35,
+        "smart_contiguous": true,
+        "blur": true,
+        "blur_radius": 5.0
+      }
+    ]
+  }
+}
+```
+
+## Notes
+- rembg/onnxruntime are optional; install for best cutout quality
+- Multiple filters can be stacked and will be applied in sequence
+- File processing limits may apply based on server configuration
+- For best performance, resize very large images before processing
+
+## Module Architecture
+
+This module follows a well-structured design pattern approach:
+
+### File Organization
+- `main.py`: Contains API router and endpoints
+- `source.py`: Contains business logic implementation
+- `models/effects_models.py`: Contains data models/schemas
+- `src/service.py`: Core service implementation
+- `src/result.py`: Result models
+- `src/filters/`: Strategy pattern implementation for filters
+  - `base.py`: Abstract filter strategy
+  - `factory.py`: Filter factory (Factory pattern)
+  - `basic_filters.py`: Basic filter implementations
+  - `advanced_filters.py`: Advanced filter implementations
+- `src/erasers/`: Utilities for eraser functionality
+
+### Design Patterns
+- **Strategy Pattern**: Used for filter implementations
+- **Factory Pattern**: Used for creating appropriate filter objects
+- **Dependency Injection**: Used throughout the codebase for better testability

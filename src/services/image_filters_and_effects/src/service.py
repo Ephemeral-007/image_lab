@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -24,10 +25,12 @@ from ..models.effects_models import (
     EraseShape,
     EraseShapeType,
     FilterSpec,
-    FilterType,
     OverlayItem,
     OverlayType,
 )
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def _load_image(effects_input: EffectsInput) -> Image.Image:
@@ -131,71 +134,23 @@ def _apply_background(image: Image.Image, bg: BackgroundAction) -> Image.Image:
 
 
 def _apply_filter(image: Image.Image, spec: FilterSpec) -> Image.Image:
-    if spec.type == FilterType.grayscale:
-        return image.convert("L").convert("RGBA")
-    if spec.type == FilterType.sepia:
-        img = image.convert("RGB")
-        np_img = np.array(img, dtype=np.float32)
-        tr = 0.393 * np_img[:, :, 0] + 0.769 * np_img[:, :, 1] + 0.189 * np_img[:, :, 2]
-        tg = 0.349 * np_img[:, :, 0] + 0.686 * np_img[:, :, 1] + 0.168 * np_img[:, :, 2]
-        tb = 0.272 * np_img[:, :, 0] + 0.534 * np_img[:, :, 1] + 0.131 * np_img[:, :, 2]
-        sep = np.stack([tr, tg, tb], axis=2)
-        sep = np.clip(sep, 0, 255).astype(np.uint8)
-        return Image.fromarray(sep, mode="RGB").convert("RGBA")
-    if spec.type == FilterType.sharpen:
-        return image.filter(ImageFilter.UnsharpMask(radius=2, percent=150))
-    if spec.type == FilterType.gaussian_blur:
-        return image.filter(ImageFilter.GaussianBlur(radius=spec.amount or 2.0))
-    if spec.type == FilterType.median_blur:
-        return image.filter(ImageFilter.MedianFilter(size=int(spec.amount or 3)))
-    if spec.type == FilterType.edge_enhance:
-        return image.filter(ImageFilter.EDGE_ENHANCE_MORE)
-    if spec.type == FilterType.emboss:
-        return image.filter(ImageFilter.EMBOSS)
-    if spec.type == FilterType.brightness:
-        return ImageEnhance.Brightness(image).enhance(float(spec.amount or 1.0))
-    if spec.type == FilterType.contrast:
-        return ImageEnhance.Contrast(image).enhance(float(spec.amount or 1.0))
-    if spec.type == FilterType.saturation:
-        return ImageEnhance.Color(image).enhance(float(spec.amount or 1.0))
-    if spec.type == FilterType.hue_shift:
-        # approximate hue shift by rotating RGB channels (simple, research can replace with HSV pipeline)
-        amount = int(spec.amount or 0)
-        r, g, b, a = image.split()
-        return Image.merge("RGBA", (g, b, r, a)) if amount % 3 else image
-    if spec.type == FilterType.gamma:
-        gamma = max(0.1, float(spec.amount or 1.0))
-        inv = 1.0 / gamma
-        lut = [min(255, int((i / 255.0) ** inv * 255.0)) for i in range(256)]
-        r, g, b, a = image.split()
-        r = r.point(lut); g = g.point(lut); b = b.point(lut)
-        return Image.merge("RGBA", (r, g, b, a))
-    if spec.type == FilterType.bilateral:
-        rgb = cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR)
-        d = 9
-        sigma_color = 75
-        sigma_space = 75
-        out = cv2.bilateralFilter(rgb, d, sigma_color, sigma_space)
-        return Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB)).convert("RGBA")
-    if spec.type == FilterType.clahe:
-        rgb = np.array(image.convert("RGB"))
-        lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=float(spec.amount or 2.0), tileGridSize=(8, 8))
-        cl = clahe.apply(l)
-        merged = cv2.merge((cl, a, b))
-        out = cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
-        return Image.fromarray(out).convert("RGBA")
-    if spec.type == FilterType.vignette:
-        rgb = np.array(image.convert("RGB"))
-        rows, cols = rgb.shape[:2]
-        kernel_x = cv2.getGaussianKernel(cols, int(spec.amount or max(cols, rows) / 3))
-        kernel_y = cv2.getGaussianKernel(rows, int(spec.amount or max(cols, rows) / 3))
-        kernel = kernel_y * kernel_x.T
-        mask = kernel / kernel.max()
-        out = (rgb * mask[:, :, None]).astype(np.uint8)
-        return Image.fromarray(out).convert("RGBA")
-    return image
+    """Apply a filter to an image using the Strategy Pattern via the FilterFactory."""
+    from .filters import FilterFactory
+    
+    try:
+        # Create the appropriate filter strategy using the factory
+        filter_strategy = FilterFactory.create(spec)
+        
+        # Apply the filter using the strategy
+        return filter_strategy.apply(image, spec)
+    except ValueError as e:
+        # If the filter type is not registered, log and return original image
+        print(f"Warning: {str(e)}")
+        return image
+    except Exception as e:
+        # For other errors, log and return original image
+        print(f"Error applying filter {spec.type}: {str(e)}")
+        return image
 
 
 def _apply_overlays(image: Image.Image, overlays: list[OverlayItem]) -> Image.Image:
@@ -257,26 +212,25 @@ def _apply_overlays(image: Image.Image, overlays: list[OverlayItem]) -> Image.Im
 
 
 def _apply_eraser(image: Image.Image, shapes: list[EraseShape]) -> Image.Image:
+    """Apply eraser effects to an image.
+    
+    Uses the enhanced eraser functionality from eraser_utils module.
+    """
+    from .erasers.eraser_utils import create_eraser_mask, apply_eraser
+    
     canvas = image.copy()
     for sh in shapes:
-        mask = Image.new("L", canvas.size, 0)
-        mdraw = ImageDraw.Draw(mask)
-        if sh.type == EraseShapeType.rectangle and sh.width and sh.height:
-            mdraw.rectangle([sh.x, sh.y, sh.x + sh.width, sh.y + sh.height], fill=255)
-        elif sh.type == EraseShapeType.circle and sh.radius:
-            mdraw.ellipse([sh.x - sh.radius, sh.y - sh.radius, sh.x + sh.radius, sh.y + sh.radius], fill=255)
-        if sh.blur:
-            mask = mask.filter(ImageFilter.GaussianBlur(radius=sh.blur_radius))
-        if sh.mosaic:
-            region = Image.composite(canvas, Image.new("RGBA", canvas.size, (0, 0, 0, 0)), mask)
-            # apply pixelation to region
-            block = max(2, int(sh.mosaic_block))
-            small = region.resize((max(1, region.width // block), max(1, region.height // block)), resample=Image.NEAREST)
-            pixelated = small.resize(region.size, Image.NEAREST)
-            canvas = Image.composite(pixelated, canvas, mask)
-        else:
-            transparent = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-            canvas = Image.composite(transparent, canvas, mask)
+        try:
+            # Create mask based on shape type
+            mask = create_eraser_mask(canvas, sh)
+            
+            # Apply eraser using the mask
+            canvas = apply_eraser(canvas, mask, sh.mosaic, sh.mosaic_block)
+        except Exception as e:
+            # Log any errors and continue with next shape
+            print(f"Error applying eraser shape {sh.type}: {str(e)}")
+            continue
+            
     return canvas
 
 
