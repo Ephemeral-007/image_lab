@@ -133,3 +133,4 @@ def apply_eraser(image: Image.Image, mask: Image.Image, mosaic: bool = False, mo
         # Make the region transparent
         transparent = Image.new("RGBA", image.size, (0, 0, 0, 0))
         return Image.composite(transparent, image, mask)
+

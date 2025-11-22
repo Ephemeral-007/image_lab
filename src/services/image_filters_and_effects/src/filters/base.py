@@ -40,3 +40,4 @@ class FilterStrategy(ABC):
             Filter type string
         """
         pass
+

@@ -125,3 +125,4 @@ Potential future enhancements could include:
 - Observer pattern for progress tracking during image processing
 - Command pattern for undo/redo functionality
 - Decorator pattern for dynamic filter composition
+

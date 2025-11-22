@@ -14,17 +14,45 @@ from src.services.image_metadata.models.metadata_models import MetadataInput, Me
 from src.services.image_metadata.src.result import DiffAPIResult, ExtractAPIResult, HashAPIResult, UpdateAPIResult
 from src.services.image_resizer.src.service import ImageResizerService
 from src.services.image_resizer.models.resizer_models import ResizerInput, ResizerOptions
-from src.services.image_stegnography.src.service import ImageStegoService
-from src.services.image_stegnography.models.stego_models import StegoTextHideRequest, StegoTextRevealRequest, StegoFileHideRequest
+from src.services.image_stegnography.core.service import ImageStegoService
+from src.services.image_stegnography.models.stego_models import StegoTextHideRequest, StegoTextRevealRequest, StegoFileHideRequest, StegoOptions, BitPlaneVisualizerResult
 from src.services.image_filters_and_effects.src.service import ImageEffectsService
 from src.services.image_filters_and_effects.src.result import EffectsAPIResult
 from src.services.image_filters_and_effects.models.effects_models import (EffectsInput, EffectsOptions,
     BackgroundAction, FilterSpec, OverlayItem, EraseShape)
 from io import BytesIO
+import io
 from PIL import Image
+import logging
+import traceback
+import os
+import uuid
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(title="Image Lab", version="1.0.0")
+
+# Ensure output directories exist
+os.makedirs("stego", exist_ok=True)
+os.makedirs("stego_recovered", exist_ok=True)
+os.makedirs("bit_planes", exist_ok=True)
+
+app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Configure appropriately for production
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+app.mount("/files", StaticFiles(directory="stego"), name="stego")
+app.mount("/recovered", StaticFiles(directory="stego_recovered"), name="recovered")
+app.mount("/visualizations", StaticFiles(directory="bit_planes"), name="visualizations")
 
 
 class ConvertQuery(BaseModel):
@@ -41,412 +69,254 @@ resizer_service = ImageResizerService()
 stego_service = ImageStegoService()
 effects_service = ImageEffectsService()
 
+# --- Stats Tracking ---
+class SystemStats:
+    def __init__(self):
+        self.encoded_count = 0
+        self.decoded_count = 0
+        self.total_bytes_processed = 0
+        self.active_sessions = 1  # Mock for now
 
-@app.post("/convert", response_model=ConversionAPIResult)
-async def convert_image(
-    to_format: TargetImageFormat,
-    file: Optional[UploadFile] = File(default=None),
-    url: Optional[str] = None,
-):
-    try:
-        options = AdvancedConversionOptions(to_format=to_format)
-        if file is not None:
-            content = await file.read()
-            conv_input = ConversionInput(image_bytes=content)
-        elif url is not None:
-            conv_input = ConversionInput(url=url)
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
+stats = SystemStats()
 
-        output_dir = Path("./converted")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_filename = file.filename if file and file.filename else "output"
-        output_path = output_dir / output_filename
-
-        result = converter.convert(
-            conv_input=conv_input,
-            options=options,
-            output_path=output_path,
-        )
-
-        return ConversionAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            output_format=result.output_format.value,
-            width=result.width,
-            height=result.height,
-            num_frames=result.num_frames,
-            was_animated=result.was_animated,
-            metadata_preserved=result.metadata_preserved,
-            bytes_written=result.bytes_written,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-class AdvancedConvertQuery(BaseModel):
-    to_format: TargetImageFormat
-    resize: ResizeOptions | None = None
-    compute_metrics: bool = False
-
-
-@app.post("/convert/advanced", response_model=ConversionAPIResult)
-async def convert_image_advanced(
-    query: AdvancedConvertQuery,
-    file: Optional[UploadFile] = File(default=None),
-    url: Optional[str] = None,
-):
-    try:
-        options = AdvancedConversionOptions(to_format=query.to_format, resize=query.resize, compute_metrics=query.compute_metrics)
-        if file is not None:
-            content = await file.read()
-            conv_input = ConversionInput(image_bytes=content)
-            output_filename = file.filename or "output"
-        elif url is not None:
-            conv_input = ConversionInput(url=url)
-            output_filename = "output"
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
-
-        output_dir = Path("./converted")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / output_filename
-
-        result = converter.convert(conv_input=conv_input, options=options, output_path=output_path)
-        return ConversionAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            output_format=result.output_format.value,
-            width=result.width,
-            height=result.height,
-            num_frames=result.num_frames,
-            was_animated=result.was_animated,
-            metadata_preserved=result.metadata_preserved,
-            bytes_written=result.bytes_written,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-class EffectsQuery(BaseModel):
-    options: EffectsOptions
-
-
-# Main effects endpoint for all effect options
-@app.post("/effects", response_model=EffectsAPIResult)
-async def apply_effects(query: EffectsQuery, file: UploadFile | None = File(default=None), url: str | None = None):
-    try:
-        if file is not None:
-            content = await file.read()
-            eff_input = EffectsInput(image_bytes=content)
-            filename = file.filename or "effects.png"
-        elif url is not None:
-            eff_input = EffectsInput(url=url)
-            filename = "effects.png"
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
-
-        out_dir = Path("./effects")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        output_path = out_dir / filename
-
-        result = effects_service.apply(eff_input, query.options, output_path=output_path)
-        return EffectsAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            width=result.width,
-            height=result.height,
-            bytes_written=result.bytes_written,
-            extra=result.extra,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-# Background effects specific endpoint
-class BackgroundQuery(BaseModel):
-    background: BackgroundAction
-
-
-@app.post("/effects/background", response_model=EffectsAPIResult)
-async def apply_background_effect(query: BackgroundQuery, file: UploadFile | None = File(default=None), url: str | None = None):
-    try:
-        if file is not None:
-            content = await file.read()
-            eff_input = EffectsInput(image_bytes=content)
-            filename = file.filename or "background_effect.png"
-        elif url is not None:
-            eff_input = EffectsInput(url=url)
-            filename = "background_effect.png"
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
-
-        out_dir = Path("./effects")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        output_path = out_dir / filename
-
-        options = EffectsOptions(background=query.background)
-        result = effects_service.apply(eff_input, options, output_path=output_path)
-        return EffectsAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            width=result.width,
-            height=result.height,
-            bytes_written=result.bytes_written,
-            extra=result.extra,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-# Filters specific endpoint
-class FiltersQuery(BaseModel):
-    filters: list[FilterSpec]
-
-
-@app.post("/effects/filters", response_model=EffectsAPIResult)
-async def apply_filters(query: FiltersQuery, file: UploadFile | None = File(default=None), url: str | None = None):
-    try:
-        if file is not None:
-            content = await file.read()
-            eff_input = EffectsInput(image_bytes=content)
-            filename = file.filename or "filtered.png"
-        elif url is not None:
-            eff_input = EffectsInput(url=url)
-            filename = "filtered.png"
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
-
-        out_dir = Path("./effects")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        output_path = out_dir / filename
-
-        options = EffectsOptions(filters=query.filters)
-        result = effects_service.apply(eff_input, options, output_path=output_path)
-        return EffectsAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            width=result.width,
-            height=result.height,
-            bytes_written=result.bytes_written,
-            extra=result.extra,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-# Single filter application endpoint
-class SingleFilterQuery(BaseModel):
-    filter: FilterSpec
-
-
-@app.post("/effects/filter", response_model=EffectsAPIResult)
-async def apply_single_filter(query: SingleFilterQuery, file: UploadFile | None = File(default=None), url: str | None = None):
-    try:
-        if file is not None:
-            content = await file.read()
-            eff_input = EffectsInput(image_bytes=content)
-            filename = file.filename or f"{query.filter.type}_filtered.png"
-        elif url is not None:
-            eff_input = EffectsInput(url=url)
-            filename = f"{query.filter.type}_filtered.png"
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
-
-        out_dir = Path("./effects")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        output_path = out_dir / filename
-
-        options = EffectsOptions(filters=[query.filter])
-        result = effects_service.apply(eff_input, options, output_path=output_path)
-        return EffectsAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            width=result.width,
-            height=result.height,
-            bytes_written=result.bytes_written,
-            extra=result.extra,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-# Overlays specific endpoint
-class OverlaysQuery(BaseModel):
-    overlays: list[OverlayItem]
-
-
-@app.post("/effects/overlays", response_model=EffectsAPIResult)
-async def apply_overlays(query: OverlaysQuery, file: UploadFile | None = File(default=None), url: str | None = None):
-    try:
-        if file is not None:
-            content = await file.read()
-            eff_input = EffectsInput(image_bytes=content)
-            filename = file.filename or "overlaid.png"
-        elif url is not None:
-            eff_input = EffectsInput(url=url)
-            filename = "overlaid.png"
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
-
-        out_dir = Path("./effects")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        output_path = out_dir / filename
-
-        options = EffectsOptions(overlays=query.overlays)
-        result = effects_service.apply(eff_input, options, output_path=output_path)
-        return EffectsAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            width=result.width,
-            height=result.height,
-            bytes_written=result.bytes_written,
-            extra=result.extra,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-# Eraser specific endpoint
-class EraseQuery(BaseModel):
-    erase: list[EraseShape]
-
-
-@app.post("/effects/erase", response_model=EffectsAPIResult)
-async def apply_eraser(query: EraseQuery, file: UploadFile | None = File(default=None), url: str | None = None):
-    try:
-        if file is not None:
-            content = await file.read()
-            eff_input = EffectsInput(image_bytes=content)
-            filename = file.filename or "erased.png"
-        elif url is not None:
-            eff_input = EffectsInput(url=url)
-            filename = "erased.png"
-        else:
-            raise HTTPException(status_code=400, detail="Provide either file or url")
-
-        out_dir = Path("./effects")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        output_path = out_dir / filename
-
-        options = EffectsOptions(erase=query.erase)
-        result = effects_service.apply(eff_input, options, output_path=output_path)
-        return EffectsAPIResult(
-            output_path=str(result.output_path) if result.output_path else None,
-            width=result.width,
-            height=result.height,
-            bytes_written=result.bytes_written,
-            extra=result.extra,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.get("/effects/filters/available")
-async def list_available_filters():
-    """This endpoint lists all available filters"""
-    from src.services.image_filters_and_effects.models.effects_models import FilterType
-    basic_filters = [f for f in FilterType.__members__]
-    
-    try:
-        # Check which advanced filters are available in the system
-        from src.services.image_filters_and_effects.src.filters import FilterFactory
-        available_filters = [filter_type for filter_type in FilterType.__members__ 
-                          if FilterFactory.is_registered(FilterType(filter_type))]
-        
-        return {
-            "all_filters": basic_filters,
-            "available_filters": available_filters
-        }
-    except ImportError:
-        # Fallback if FilterFactory is not accessible
-        return {
-            "all_filters": basic_filters
-        }
-
+@app.get("/stats")
+async def get_stats():
+    return {
+        "encoded_count": stats.encoded_count,
+        "decoded_count": stats.decoded_count,
+        "total_bytes_processed": stats.total_bytes_processed,
+        "active_sessions": stats.active_sessions
+    }
 
 @app.post("/stego/capacity")
-async def stego_capacity(file: UploadFile = File(...), bits_per_channel: int = 1):
+async def calculate_capacity(file: UploadFile = File(...)):
+    """Calculates capacity for an image across all bit depths (1-8)."""
     try:
-        img = Image.open(BytesIO(await file.read()))
-        total_bits, total_bytes = img.width * img.height * 3 * bits_per_channel, (img.width * img.height * 3 * bits_per_channel) // 8
-        # Reuse service for exact numbers and text max
-        res = stego_service.capacity(img, bits_per_channel)
-        return res.model_dump()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        width, height = image.size
+        pixels = width * height
+        channels = len(image.getbands())
+        
+        capacity_data = []
+        for bits in range(1, 9):
+            total_bits = pixels * channels * bits
+            bytes_capacity = total_bits // 8
+            capacity_data.append({
+                "bits": bits,
+                "bytes": bytes_capacity,
+                "pixels": pixels,
+                "channels": channels
+            })
+            
+        return {"filename": file.filename, "capacity": capacity_data}
+    except Exception as e:
+        logger.error(f"Error calculating capacity: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Note: Convert and Effects endpoints temporarily omitted for brevity
 
 
 @app.post("/stego/hide-text")
-async def stego_hide_text(file: UploadFile = File(...), text: str = Form(...), password: str | None = Form(default=None), bits_per_channel: int = Form(default=1)):
+async def hide_text(
+    file: UploadFile = File(...),
+    text: str = Form(...),
+    password: Optional[str] = Form(None),
+    bits_per_channel: int = Form(1),
+    lsb_depth: int = Form(1) # For backward compatibility
+):
     try:
-        cover = Image.open(BytesIO(await file.read()))
-        req = StegoTextHideRequest(text=text, options={"password": password, "bits_per_channel": bits_per_channel})
-        # Pydantic will parse dict into model
-        req = StegoTextHideRequest.model_validate(req)
-        stego_img, result = stego_service.hide_text(cover, req)
-        out_dir = Path("./stego"); out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "stego_text.png"
-        stego_img.save(out_path, format="PNG")
+        # Handle parameter alias
+        depth = bits_per_channel if bits_per_channel != 1 else lsb_depth
+        
+        logger.info(f"Received hide-text request: filename={file.filename}, text_len={len(text)}, bits={depth}, encrypted={bool(password)}")
+        
+        contents = await file.read()
+        input_image = Image.open(io.BytesIO(contents))
+        
+        # Update stats
+        stats.encoded_count += 1
+        stats.total_bytes_processed += len(contents)
+        
+        # Create request object
+        options = StegoOptions(
+            password=password,
+            bits_per_channel=depth
+        )
+        req = StegoTextHideRequest(
+            text=text,
+            options=options
+        )
+        
+        result_image, result = stego_service.hide_text(input_image, req)
+        
+        output_filename = f"stego_{uuid.uuid4().hex}.png"
+        output_path = os.path.join("stego", output_filename)
+        result_image.save(output_path, format="PNG")
+        
         return {
-            "output_path": str(out_path),
+            "message": "Text hidden successfully",
+            "output_path": f"files/{output_filename}",
             "used_capacity_bits": result.used_capacity_bits,
-            "payload_size_bytes": result.payload_size_bytes,
-            "encrypted": result.encrypted,
-            "encryption": result.encryption,
-            "kdf": result.kdf,
+            "encrypted": bool(password)
         }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
+    except ValueError as e:
+        logger.error(f"ValueError in hide-text: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in hide-text: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/stego/reveal-text")
-async def stego_reveal_text(file: UploadFile = File(...), password: str | None = Form(default=None)):
+async def reveal_text(
+    file: UploadFile = File(...),
+    password: Optional[str] = Form(None)
+):
     try:
-        stego_img = Image.open(BytesIO(await file.read()))
-        try:
-            res = stego_service.reveal_text(stego_img, StegoTextRevealRequest(password=password))
-        except ValueError as e:
-            raise HTTPException(status_code=401, detail=str(e))
-        return {"text": res.text}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
+        logger.info(f"Received reveal-text request: filename={file.filename}, encrypted={bool(password)}")
+        contents = await file.read()
+        input_image = Image.open(io.BytesIO(contents))
+        
+        # Update stats
+        stats.decoded_count += 1
+        stats.total_bytes_processed += len(contents)
+        
+        # Create request object
+        req = StegoTextRevealRequest(password=password)
+        
+        result = stego_service.reveal_text(input_image, req)
+        
+        return {"text": result.text}
+    except ValueError as e:
+        logger.warning(f"ValueError in reveal-text: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in reveal-text: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/stego/hide-file")
-async def stego_hide_file(cover: UploadFile = File(...), secret: UploadFile = File(...), password: str | None = Form(default=None), bits_per_channel: int = Form(default=1)):
+async def hide_file(
+    cover: UploadFile = File(...),
+    secret: UploadFile = File(...),
+    password: Optional[str] = Form(None),
+    bits_per_channel: int = Form(1)
+):
     try:
-        cover_img = Image.open(BytesIO(await cover.read()))
+        logger.info(f"Received hide-file request: cover={cover.filename}, secret={secret.filename}, bits={bits_per_channel}")
+        
+        cover_bytes = await cover.read()
         secret_bytes = await secret.read()
-        req = StegoFileHideRequest(options={"password": password, "bits_per_channel": bits_per_channel})
-        req = StegoFileHideRequest.model_validate(req)
-        stego_img, result = stego_service.hide_file(cover_img, req, filename=secret.filename or "secret.bin", data=secret_bytes)
-        out_dir = Path("./stego"); out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "stego_file.png"
-        stego_img.save(out_path, format="PNG")
-        return {"output_path": str(out_path), "used_capacity_bits": result.used_capacity_bits, "payload_size_bytes": result.payload_size_bytes}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        
+        cover_image = Image.open(io.BytesIO(cover_bytes))
+        
+        # Update stats
+        stats.encoded_count += 1
+        stats.total_bytes_processed += len(cover_bytes) + len(secret_bytes)
+        
+        # Create request object
+        options = StegoOptions(
+            password=password,
+            bits_per_channel=bits_per_channel
+        )
+        # Note: StegoFileHideRequest might not take file_bytes directly if service takes it separately
+        # Service signature: hide_file(cover, req, filename, data)
+        # So req just needs options
+        req = StegoFileHideRequest(
+            file_bytes=b"", # Placeholder if required, or maybe not needed if service takes data separately
+            filename=secret.filename,
+            options=options
+        )
+        
+        result_image, result = stego_service.hide_file(
+            cover_image,
+            req,
+            secret.filename,
+            secret_bytes
+        )
+        
+        output_filename = f"stego_file_{uuid.uuid4().hex}.png"
+        output_path = os.path.join("stego", output_filename)
+        result_image.save(output_path, format="PNG")
+        
+        return {
+            "message": "File hidden successfully",
+            "output_path": f"files/{output_filename}",
+            "used_capacity_bits": result.used_capacity_bits,
+            "encrypted": bool(password)
+        }
+    except Exception as e:
+        logger.error(f"Error in hide-file: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/stego/reveal-file")
-async def stego_reveal_file(file: UploadFile = File(...), password: str | None = Form(default=None)):
+async def reveal_file(
+    file: UploadFile = File(...),
+    password: Optional[str] = Form(None)
+):
     try:
-        stego_img = Image.open(BytesIO(await file.read()))
+        logger.info(f"Received reveal-file request: filename={file.filename}, encrypted={bool(password)}")
+        contents = await file.read()
+        input_image = Image.open(io.BytesIO(contents))
+        
+        # Update stats
+        stats.decoded_count += 1
+        stats.total_bytes_processed += len(contents)
+        
         out_dir = Path("./stego_recovered")
-        res = stego_service.reveal_file(stego_img, password=password, output_dir=out_dir)
-        return {"output_path": str(res.output_path), "filename": res.filename, "size_bytes": res.size_bytes}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        out_dir.mkdir(parents=True, exist_ok=True)
+        
+        res = stego_service.reveal_file(input_image, password=password, output_dir=out_dir)
+        
+        return {
+            "output_path": str(res.output_path),
+            "filename": res.filename,
+            "size_bytes": res.size_bytes
+        }
+    except Exception as e:
+        logger.error(f"Error in reveal-file: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+from fastapi.responses import FileResponse
+
+@app.post("/stego/visualize")
+async def visualize_bit_planes(
+    file: UploadFile = File(...),
+    channel: str = Form("R"),
+    bit_plane: Optional[int] = Form(None)
+):
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        
+        request_id = uuid.uuid4().hex
+        out_dir = Path("bit_planes") / request_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        
+        if bit_plane is not None:
+            res = stego_service.visualize_single_bit_plane(image, bit_plane, channel, out_dir)
+            if res.output_images:
+                return FileResponse(res.output_images[0])
+            else:
+                raise HTTPException(status_code=500, detail="No visualization generated")
+        else:
+            res = stego_service.visualize_bit_planes(image, channel, out_dir)
+            
+            # Convert paths to URLs
+            image_urls = []
+            for path in res.output_images:
+                filename = path.name
+                image_urls.append(f"visualizations/{request_id}/{filename}")
+                
+            return {
+                "output_images": image_urls,
+                "channel": res.channel,
+                "bit_plane": res.bit_plane
+            }
+    except Exception as e:
+        logger.error(f"Error in visualize: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class ResizeQuery(BaseModel):

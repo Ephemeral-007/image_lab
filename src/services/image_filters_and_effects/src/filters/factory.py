@@ -57,3 +57,4 @@ class FilterFactory:
             True if registered, False otherwise
         """
         return filter_type.value in cls._registry
+

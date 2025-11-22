@@ -54,10 +54,13 @@ build/
 dist/
 .cache/
 .vite/
-.next/           # if using Next.js
+.next/
+        # if using Next.js
 .parcel-cache/
 .out/
 .esbuild/
+
+frontend_stegnography/.next/*
 
 # Logs
 npm-debug.log*

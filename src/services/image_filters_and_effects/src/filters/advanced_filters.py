@@ -302,3 +302,4 @@ FilterFactory.register(PencilSketchFilter)
 FilterFactory.register(ColorSplashFilter)
 FilterFactory.register(NoiseReductionFilter)
 FilterFactory.register(GlitchFilter)
+

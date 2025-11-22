@@ -111,7 +111,7 @@ class ImageStegoService:
             password=options.password, 
             filename=None,
             compress=options.compress,
-            error_correction=options.error_correction.value,
+            error_correction_level=options.error_correction.value,
             bits_per_channel=bits_per_channel,
             channels=channels
         )
@@ -262,7 +262,7 @@ class ImageStegoService:
             password=options.password, 
             filename=filename,
             compress=options.compress,
-            error_correction=options.error_correction.value,
+            error_correction_level=options.error_correction.value,
             bits_per_channel=bits_per_channel,
             channels=channels
         )
